@@ -1,0 +1,90 @@
+name: Deploy auf empire
+
+# Wiederverwendbarer Deploy-Schritt fuer alle Apps auf empire.
+#
+# Warum zentral und nicht kopiert: Der Deploy-Weg aendert sich im Laufe der
+# Migration noch (Host, Schluessel, Pruefungen). Liegt er 15-mal kopiert in 15
+# Repos, aendert man ihn 15-mal -- und findet Monate spaeter drei Repos, die man
+# vergessen hat. Hier ist es eine Datei.
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: 'Name der Dokku-App auf empire (z.B. leo)'
+        required: true
+        type: string
+      health_url:
+        description: 'URL, die nach dem Deploy HTTP 200 liefern muss. Leer = keine Pruefung.'
+        required: false
+        type: string
+        default: ''
+      health_attempts:
+        description: 'Wie oft die Erreichbarkeit geprueft wird (10 s Abstand)'
+        required: false
+        type: number
+        default: 10
+    secrets:
+      DOKKU_SSH_KEY:
+        description: 'Privater ed25519-Key; oeffentlicher Teil liegt in dokku ssh-keys'
+        required: true
+      DOKKU_HOST:
+        description: 'IP oder Hostname von empire'
+        required: true
+      DOKKU_HOST_KEY:
+        description: 'Host-Key von empire (Ausgabe von ssh-keyscan)'
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.app }}
+    runs-on: ubuntu-latest
+    concurrency:
+      # Zwei gleichzeitige Deploys derselben App streiten sich um den
+      # Git-Receive-Hook auf dem Server. Lieber anstellen.
+      group: deploy-empire-${{ inputs.app }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Dokku braucht echte Historie, kein shallow clone.
+          fetch-depth: 0
+
+      - name: SSH vorbereiten
+        env:
+          DOKKU_SSH_KEY: ${{ secrets.DOKKU_SSH_KEY }}
+          DOKKU_HOST_KEY: ${{ secrets.DOKKU_HOST_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DOKKU_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Host-Key fest statt ssh-keyscan. Zwei Gruende:
+          # 1. keyscan vertraut dem ersten Kontakt blind -- angreifbar.
+          # 2. keyscan verbindet OHNE Authentifizierung, und fail2ban wertete
+          #    das im aggressive-Modus als Angriff und sperrte den Runner aus.
+          #    Belegt am 24.08.2026 an glitchtip-deploy.
+          printf '%s\n' "$DOKKU_HOST_KEY" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DOKKU_HOST: ${{ secrets.DOKKU_HOST }}
+          APP: ${{ inputs.app }}
+        run: |
+          git push "dokku@${DOKKU_HOST}:${APP}" HEAD:refs/heads/master --force
+
+      - name: Erreichbarkeit pruefen
+        if: inputs.health_url != ''
+        env:
+          URL: ${{ inputs.health_url }}
+          ATTEMPTS: ${{ inputs.health_attempts }}
+        run: |
+          # Ein gruener Deploy-Schritt heisst nur, dass Dokku zufrieden war.
+          # Der Beleg ist eine Antwort von aussen.
+          for i in $(seq 1 "$ATTEMPTS"); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$URL" || true)
+            echo "Versuch $i/$ATTEMPTS: HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::$URL antwortet nach $ATTEMPTS Versuchen nicht mit 200"
+          exit 1
