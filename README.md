@@ -21,10 +21,39 @@ jobs:
     with:
       app: meine-app
       health_url: https://meine-app.lionizers.com/health
-    secrets: inherit
+    secrets: inherit                  # nur INNERHALB von Lionizers/* -- siehe unten
 ```
 
 `secrets: inherit` reicht die drei Secrets durch, ohne sie einzeln aufzuzaehlen.
+
+## ⚠️ Ausserhalb der Lionizers-Org: Secrets einzeln durchreichen
+
+Die GitHub-Doku beschraenkt `inherit` ausdruecklich auf denselben Owner:
+*"Workflows that call reusable workflows **in the same organization or
+enterprise** can use the `inherit` keyword to implicitly pass the secrets."*
+
+Ein Repo unter einem persoenlichen Account (z.B. `NilsLoewe/coaching`) ist ein
+anderer Owner. Dort bricht der Job nach zwei Sekunden ab mit:
+
+```
+Secret DOKKU_SSH_KEY is required, but not provided while calling.
+```
+
+**Die Meldung zeigt auf die Secrets, die Ursache ist die Owner-Grenze.** Alle
+drei Secrets liegen im Repo und sind korrekt -- man sucht sonst genau an der
+Stelle, die funktioniert. Belegt am 25.08.2026 beim Umzug von `coaching`.
+
+```yaml
+    secrets:
+      DOKKU_SSH_KEY: ${{ secrets.DOKKU_SSH_KEY }}
+      DOKKU_HOST: ${{ secrets.DOKKU_HOST }}
+      DOKKU_HOST_KEY: ${{ secrets.DOKKU_HOST_KEY }}
+```
+
+Aus demselben Grund ist dieses Repo seit dem 25.08.2026 **public**: ein privater
+Reusable Workflow laesst sich org-uebergreifend gar nicht erst aufrufen. Er
+enthaelt keine Geheimnisse -- nur Secret-*Namen*, den Ablauf und Kommentare;
+die Server-IP steht ohnehin oeffentlich im DNS.
 
 ## Erforderliche Secrets im App-Repo
 
@@ -36,6 +65,10 @@ jobs:
 
 Setzen laesst sich das mit `devops/server/onboard-app.sh`, das die App auf
 empire anlegt und die Secrets gleich mit schreibt.
+
+Zieht ein **MCP-Server** um, gilt zusaetzlich
+`devops/docs/mcp-server-nach-empire.md` -- der OAuth-State in Redis muss
+mitwandern, und `/mcp` taugt nicht als `health_url` (401 ohne Token).
 
 ## Eingaben
 
