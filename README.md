@@ -17,7 +17,7 @@ jobs:
   deploy:
     needs: test                       # <- die Bedingung "nur wenn CI gruen"
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    uses: Lionizers/dokku-deploy/.github/workflows/deploy.yml@main
+    uses: Lionizers/dokku-deploy/.github/workflows/deploy.yml@v1
     with:
       app: meine-app
       health_url: https://meine-app.lionizers.com/health
